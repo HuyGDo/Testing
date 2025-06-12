@@ -1,0 +1,28 @@
+[
+  {
+    "targets": [
+      "192.168.1.101:9100"
+    ],
+    "labels": {
+      "env": "prod",
+      "region": "us-east"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.102:9100"
+    ],
+    "labels": {
+      "env": "dev",
+      "region": "us-west"
+    }
+  },
+  {
+    "targets": [
+      "192.168.1.10:9100"
+    ],
+    "labels": {
+      "instance": "test-vm-1"
+    }
+  }
+]

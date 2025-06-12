@@ -1,0 +1,167 @@
+# List all CPU-related metrics Prometheus has seen so far
+curl -s http://localhost:9090/api/v1/label/__name__/values | jq '.data[]' | grep cpu
+# Should show "windows_cpu_time_total"
+
+
+uvicorn app.main:app --reload --port 8001
+
+
+Below is a **straight-through “brew-only” playbook for Apple-silicon macOS (M-series) that gets Redis, RabbitMQ, Prometheus, and the prom-pg-adapter onto your laptop, turns them into background services, and shows where each one plugs into your Node + TimescaleDB stack.**
+
+---
+
+## 1 · Prerequisites
+
+```bash
+# Make sure you’re on the Apple-silicon Homebrew prefix
+which brew          # → /opt/homebrew/bin/brew
+brew update && brew upgrade
+```
+
+*(If you still have an old Intel-prefix at /usr/local you may want to `brew uninstall --force` anything duplicate before proceeding.)*
+
+---
+
+## 2 · Redis
+
+```bash
+brew install redis         # Arm64 bottle ✔️ :contentReference[oaicite:0]{index=0}
+brew services start redis  # auto-starts on login
+redis-cli ping             # → PONG
+```
+
+Ports
+: 6379 (TCP)
+
+Project usage
+: Point your app or `node-cache` layer at `redis://localhost:6379`.
+
+---
+
+## 3 · RabbitMQ
+
+```bash
+brew install rabbitmq      # pulls Erlang dependency ✔️ :contentReference[oaicite:1]{index=1}
+brew services start rabbitmq
+# Enable the handy web UI
+rabbitmq-plugins enable rabbitmq_management
+open http://localhost:15672       # user/pass: guest / guest
+```
+
+Ports
+: 5672 (AMQP), 15672 (HTTP UI)
+
+Project usage
+: Add `amqplib` (or NestJS microservices) in your Node layer and connect to `amqp://localhost:5672`.
+
+---
+
+## 4 · Prometheus
+
+```bash
+brew install prometheus            # Arm64 bottle ✔️ :contentReference[oaicite:2]{index=2}
+brew services start prometheus
+open http://localhost:9090         # built-in console
+```
+
+### 4.1  Edit the scrape/remote-write config
+
+Homebrew keeps the main config at:
+
+```
+/opt/homebrew/etc/prometheus.yml
+```
+
+Minimal starter that *scrapes itself* and *forwards to Timescale* (prom-pg-adapter):
+
+```yaml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+remote_write:
+  - url: "http://localhost:9201/write"   # prom-pg-adapter
+remote_read:
+  - url: "http://localhost:9201/read"
+```
+
+After editing:
+
+```bash
+brew services restart prometheus
+```
+
+---
+
+## 5 · Prom-PG-Adapter (a.k.a. Prometheus → Postgres/Timescale bridge)
+
+go install github.com/CrunchyData/postgresql-prometheus-adapter@latest
+sudo mv "$(go env GOPATH)/bin/postgresql-prometheus-adapter" /usr/local/bin/
+
+# ❷ run it (systemd / launchd / docker) – eg. port 9201
+DATABASE_URL="postgres://postgres@localhost:5432/metrics?sslmode=disable" \
+postgresql-prometheus-adapter --web-listen-address=":9201"
+
+## 6 · Wiring Prometheus to your Node app
+
+1. **Expose a `/metrics` endpoint**:
+
+   ```js
+   import express from 'express';
+   import client from 'prom-client';
+
+   const app = express();
+   client.collectDefaultMetrics();
+
+   app.get('/metrics', async (req, res) => {
+     res.set('Content-Type', client.register.contentType);
+     res.end(await client.register.metrics());
+   });
+
+   app.listen(3000);
+   ```
+
+2. **Tell Prometheus to scrape it** (add to `prometheus.yml`):
+
+   ```yaml
+   - job_name: "main-app"
+     static_configs:
+       - targets: ["host.docker.internal:3000"]  # or localhost if native
+   ```
+
+Reload Prometheus and you’ll see your custom metrics in the web UI, stored long-term in Timescale via the adapter.
+
+---
+
+## 7 · Handy cheatsheet
+
+```bash
+brew services list            # see status of all four services
+redis-cli ping                # test Redis
+rabbitmq-diagnostics status   # test RabbitMQ
+curl -s localhost:9201/metrics | head   # adapter’s own health metrics
+
+# one-liner
+env -i $(cat ~/.config/prom_adapter.env | xargs) \
+  /usr/local/bin/postgresql-prometheus-adapter \
+  --web-listen-address="${WEB_LISTEN_ADDRESS:-:9201}"
+
+psql -d metrics -c "SELECT count(*) FROM metrics;"  # verify data flowing
+```
+
+---
+
+### What you’ve achieved
+
+| Component           | Role in pipeline                                 | Running as              |
+| ------------------- | ------------------------------------------------ | ----------------------- |
+| **Redis**           | Fast in-memory cache for future inference layer  | `brew services`         |
+| **RabbitMQ**        | Message broker for async jobs / ingest buffering | `brew services`         |
+| **Prometheus**      | Scrapes exporters & Node app                     | `brew services`         |
+| **prom-pg-adapter** | Persists Prometheus samples to TimescaleDB       | manual / custom service |
+
+All of them are now *arm64-native*, start automatically on reboot, and expose canonical localhost ports so your Node modules can connect immediately. Happy hacking!

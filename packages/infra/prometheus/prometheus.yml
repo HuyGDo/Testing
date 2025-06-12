@@ -1,0 +1,15 @@
+# infra/prometheus/prometheus.yml
+global:
+  scrape_interval: 15s # By default, scrape targets every 15 seconds.
+
+scrape_configs:
+  - job_name: 'node_exporter_simulator'
+    file_sd_configs:
+      - files:
+          - 'targets.json' # Path relative to the prometheus.yml file
+
+remote_write:
+  - url: "http://localhost:9201/write"
+
+remote_read:      # optional, lets Prometheus query long-term data
+  - url: "http://localhost:9201/read"

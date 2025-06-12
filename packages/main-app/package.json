@@ -1,0 +1,31 @@
+{
+  "name": "main-app",
+  "version": "1.0.0",
+  "description": "VM Management Service",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "nodemon src/server.js",
+    "generate-targets": "node scripts/generate-targets.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "directories": {
+    "test": "tests"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.8",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "node-hstore": "^0.0.1",
+    "nodemon": "^3.1.10",
+    "pg": "^8.8.0",
+    "redis": "^5.5.6",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.28.0",
+    "prettier": "^3.5.3"
+  }
+}

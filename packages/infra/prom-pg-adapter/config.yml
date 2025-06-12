@@ -1,0 +1,27 @@
+# Connection string for your TimescaleDB instance
+database: "postgres://huygdo@localhost:5432/metrics?sslmode=disable"
+
+# This section tells prom-pg-adapter how to map a Prometheus label
+# to a foreign key in the metrics table. In this case, it maps the
+# `instance` label from a scraped metric to a row in the `vm` table
+# (by matching `vm.name`), and then uses that row's `vm_id` for
+# insertion into the `metrics.vm_id` column.
+foreign-key:
+  vm_id:
+    from-table: vm
+    from-column: name
+    to-column: vm_id
+    on-label: instance
+
+# The server can be configured to expose a TLS server.
+# tls-config:
+#  server-cert-file: /path/to/server-cert.pem
+#  server-key-file: /path/to/server-key.pem
+
+# The server can be configured to use a custom CA to validate client certificates.
+# tls-config:
+#  ca-cert-file: /path/to/ca-cert.pem
+
+# The server can be configured to require client certificates for all incoming connections.
+# tls-config:
+#  require-client-certs: true 

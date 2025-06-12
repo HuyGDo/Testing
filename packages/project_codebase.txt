@@ -1,0 +1,105 @@
+/predictive-scaling-platform/
+├── 📂 packages/
+│   ├── 📂 ui-react/                     # Ứng dụng Frontend React
+│   │   ├── public/
+│   │   │   └── index.html
+│   │   ├── src/
+│   │   │   ├── 📂 api/                   # Các hàm gọi API đến Node.js backend
+│   │   │   │   ├── apiClient.js        # Cấu hình instance của axios
+│   │   │   │   ├── predictionService.js
+│   │   │   │   └── vmService.js
+│   │   │   ├── 📂 assets/              # Chứa hình ảnh, fonts, v.v.
+│   │   │   ├── 📂 components/            # Các component UI tái sử dụng
+│   │   │   │   ├── 📂 common/          # Components chung (Button, Spinner)
+│   │   │   │   ├── 📂 dashboard/       # Components cho dashboard
+│   │   │   │   │   ├── PredictionChart.jsx
+│   │   │   │   │   └── RecommendationCard.jsx
+│   │   │   │   └── 📂 vm/              # Components quản lý VM
+│   │   │   │       ├── VmTable.jsx
+│   │   │   │       └── AddVmModal.jsx
+│   │   │   ├── 📂 hooks/                 # Các custom React hooks
+│   │   │   │   └── usePredictionPolling.js # Hook để hỏi kết quả dự đoán
+│   │   │   ├── 📂 pages/                 # Mỗi trang là một component chính
+│   │   │   │   ├── DashboardPage.jsx
+│   │   │   │   └── VmManagementPage.jsx
+│   │   │   ├── 📂 styles/              # Các file CSS/SCSS
+│   │   │   ├── App.jsx
+│   │   │   └── main.jsx
+│   │   └── package.json
+│   │
+│   ├── 📂 app-main-nodejs/             # Ứng dụng Backend Chính Node.js
+│   │   ├── src/
+│   │   │   ├── 📂 api/                   # Định nghĩa các routes (đường dẫn API)
+│   │   │   │   ├── index.js
+│   │   │   │   ├── prediction.routes.js
+│   │   │   │   └── vm.routes.js
+│   │   │   ├── 📂 config/                # Cấu hình kết nối (db, redis, rabbitmq)
+│   │   │   │   ├── database.js
+│   │   │   │   ├── index.js
+│   │   │   │   ├── rabbitmq.js
+│   │   │   │   └── redis.js
+│   │   │   ├── 📂 controllers/           # Lớp Controller: xử lý req/res
+│   │   │   │   ├── prediction.controller.js
+│   │   │   │   └── vm.controller.js
+│   │   │   ├── 📂 services/              # Lớp Service: chứa business logic
+│   │   │   │   ├── prediction.service.js  # Gửi task, check status
+│   │   │   │   └── vm.service.js          # Logic CRUD VM
+│   │   │   ├── 📂 repository/            # Lớp Repository: tương tác CSDL
+│   │   │   │   ├── dashboard.repository.js
+│   │   │   │   └── vm.repository.js
+│   │   │   └── server.js               # File khởi chạy server Express
+│   │   ├── .env.example
+│   │   └── package.json
+│   │
+│   ├── 📂 service-ai-fastapi/            # Ứng dụng AI/ML Python
+│   │   ├── 📂 app/
+│   │   │   ├── 📂 api/                   # Các API endpoint (health check)
+│   │   │   │   └── endpoints/
+│   │   │   │       └── health.py
+│   │   │   ├── 📂 core/                  # Cấu hình chính của app
+│   │   │   │   ├── config.py             # Đọc biến môi trường
+│   │   │   │   └── lifespan.py           # Quản lý kết nối khi app start/shutdown
+│   │   │   ├── 📂 features/              # Nơi chứa các plugin feature engineering
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── base_transformer.py   # Lớp cơ sở trừu tượng
+│   │   │   │   └── cpu_transformer.py    # Plugin cụ thể cho CPU
+│   │   │   ├── 📂 models/                # Định nghĩa và huấn luyện mô hình AI
+│   │   │   │   ├── train.py
+│   │   │   │   └── lstm_v1.py
+│   │   │   ├── 📂 repository/            # Tương tác với CSDL và Redis
+│   │   │   │   ├── timescale_repo.py
+│   │   │   │   └── redis_repo.py
+│   │   │   ├── 📂 schemas/               # Pydantic schemas để validate dữ liệu
+│   │   │   │   └── task_schema.py
+│   │   │   ├── 📂 services/              # Business logic
+│   │   │   │   ├── data_processing_service.py
+│   │   │   │   └── prediction_service.py
+│   │   │   ├── 📂 workers/               # Logic xử lý tác vụ từ RabbitMQ
+│   │   │   │   ├── prediction_worker.py  # Worker chính
+│   │   │   │   └── rabbitmq_client.py    # Class quản lý kết nối RabbitMQ
+│   │   │   └── main.py                 # File khởi chạy server FastAPI và các worker
+│   │   ├── .env.example
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   │
+│   └── 📂 shared-types/                 # Gói chia sẻ kiểu dữ liệu
+│       ├── src/
+│       │   ├── index.ts
+│       │   ├── prediction.types.ts
+│       │   └── vm.types.ts
+│       └── package.json
+│
+├── 📂 infra/                         # Các file cấu hình hạ tầng
+│   ├── 📜 docker-compose.yml        # Chạy toàn bộ hệ thống local
+│   ├── 📂 prometheus/
+│   │   ├── 📜 prometheus.yml
+│   │   └── 📜 targets.json          # File này được Node.js quản lý
+│   └── 📂 prom-pg-adapter/
+│       └── 📜 config.yml
+│
+├── 📂 scripts/                       # Các script chung
+│   └── 📜 init_db.sql               # Chứa các lệnh CREATE TABLE
+│
+├── 📜 .gitignore
+├── 📜 package.json                  # File package.json gốc của monorepo
+└── 📜 README.md                     # Tài liệu tổng quan dự án
