@@ -59,6 +59,42 @@ class PredictionController {
       res.status(500).json({ error: 'Failed to retrieve prediction result.' });
     }
   }
+
+  static async getDashboardData(req, res) {
+    try {
+      const { vm_id, metric } = req.query;
+      
+      if (!vm_id || !metric) {
+        return res.status(400).json({ 
+          error: 'Missing required parameters: vm_id, metric' 
+        });
+      }
+
+      const data = await PredictionService.getHistoricalData(vm_id, metric);
+      res.status(200).json(data);
+    } catch (error) {
+      console.error('Error getting dashboard data:', error);
+      res.status(500).json({ error: 'Failed to retrieve dashboard data.' });
+    }
+  }
+
+  static async getRecommendations(req, res) {
+    try {
+      const { task_id } = req.query;
+      
+      if (!task_id) {
+        return res.status(400).json({ 
+          error: 'Missing required parameter: task_id' 
+        });
+      }
+
+      const recommendation = await PredictionService.getRecommendation(task_id);
+      res.status(200).json({ recommendation });
+    } catch (error) {
+      console.error('Error getting recommendations:', error);
+      res.status(500).json({ error: 'Failed to retrieve recommendations.' });
+    }
+  }
 }
 
 module.exports = PredictionController;

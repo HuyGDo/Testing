@@ -39,7 +39,23 @@ async function getAllVms() {
     }));
 }
 
+async function deleteVm(vmId) {
+    const client = await db.getClient();
+    try {
+        await client.query('BEGIN');
+        await vmRepository.deleteVmTargetsInTransaction(vmId, client);
+        await vmRepository.deleteVmInTransaction(vmId, client);
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
 module.exports = {
     createVm,
     getAllVms,
+    deleteVm
 };

@@ -59,9 +59,21 @@ async function getAllVms() {
     return rows;
 }
 
+async function deleteVmInTransaction(vmId, client) {
+    const query = 'DELETE FROM vm WHERE vm_id = $1';
+    await client.query(query, [vmId]);
+}
+
+async function deleteVmTargetsInTransaction(vmId, client) {
+    const query = 'DELETE FROM prom_sd_static_targets WHERE vm_id = $1';
+    await client.query(query, [vmId]);
+}
+
 module.exports = {
     createVm,
     createVmInTransaction,
     createVmTargetInTransaction,
-    getAllVms
+    getAllVms,
+    deleteVmInTransaction,
+    deleteVmTargetsInTransaction
 };
