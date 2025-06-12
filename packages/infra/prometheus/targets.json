@@ -4,6 +4,8 @@
       "192.168.1.101:9100"
     ],
     "labels": {
+      "instance": "vm1",
+      "vm_id": "550e8400-e29b-41d4-a716-446655440001",
       "env": "prod",
       "region": "us-east"
     }
@@ -13,6 +15,8 @@
       "192.168.1.102:9100"
     ],
     "labels": {
+      "instance": "vm2",
+      "vm_id": "550e8400-e29b-41d4-a716-446655440002",
       "env": "dev",
       "region": "us-west"
     }
@@ -22,7 +26,18 @@
       "192.168.1.10:9100"
     ],
     "labels": {
-      "instance": "test-vm-1"
+      "instance": "test-vm-1",
+      "vm_id": "761605f7-4238-40c4-b0c4-4b996d86cf8c"
+    }
+  },
+  {
+    "targets": [
+      "127.0.0.1:9100"
+    ],
+    "labels": {
+      "instance": "test-simulator-1",
+      "vm_id": "ddd09628-c426-4047-8427-60343d638ee5",
+      "group": "simulators"
     }
   }
 ]

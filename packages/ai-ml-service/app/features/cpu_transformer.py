@@ -1,115 +1,115 @@
 import logging
 import pandas as pd
 from sqlalchemy import text
-from app.core.db import engine # Assuming engine is configured and available
+from app.core.db import engine
 
 # --- Standard library logging setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-
-def _calculate_cpu_features(df: pd.DataFrame, metric_name: str) -> list[dict]:
+class CpuFeatureTransformer:
     """
-    Calculates features and transforms them into a narrow format for the 'features' table.
-    
-    Args:
-        df: A pandas DataFrame with columns ['bucket', 'vm_id', 'cpu_util_pct'].
-        metric_name: The name of the metric being processed (e.g., 'cpu_util_pct').
-
-    Returns:
-        A list of dictionaries, where each dictionary is a single feature value
-        ready to be inserted into the 'features' table.
+    A class to handle the feature engineering process for CPU metrics
+    in a robust, idempotent, and worker-friendly manner.
     """
-    if df.empty:
-        return []
+    def __init__(self, metric_name='cpu_util_pct'):
+        self.metric_name = metric_name
 
-    df['bucket'] = pd.to_datetime(df['bucket'])
-    df = df.set_index('bucket')
+    def _calculate_features(self, df: pd.DataFrame) -> list[dict]:
+        """
+        Calculates rolling features from a DataFrame and transforms them into a
+        narrow format suitable for the 'features' table.
+        """
+        if df.empty:
+            return []
 
-    # Calculate rolling features per VM
-    features_df = df.groupby('vm_id')['cpu_util_pct'] \
-                    .rolling(window=5, min_periods=1) \
-                    .agg(['mean', 'std']) \
-                    .reset_index() \
-                    .rename(columns={"level_1": "ts"}) # Use 'ts' to match the features table
+        df['bucket'] = pd.to_datetime(df['bucket'])
+        df = df.set_index('bucket')
 
-    features_df = features_df.fillna(0.0)
+        # Calculate rolling features per VM
+        features_df = df.groupby('vm_id')[self.metric_name] \
+                        .rolling(window=5, min_periods=1) \
+                        .agg(['mean', 'std']) \
+                        .reset_index()
 
-    # Melt the DataFrame from wide to long/narrow format
-    melted_df = features_df.melt(
-        id_vars=['ts', 'vm_id'],
-        value_vars=['mean', 'std'],
-        var_name='feature_name_suffix',
-        value_name='value'
-    )
+        # --- THE FIX IS HERE ---
+        # The column created from the time index is named 'bucket', not 'level_1'.
+        # We rename it to 'ts' to match the schema of the 'features' table.
+        features_df.rename(columns={'bucket': 'ts'}, inplace=True)
 
-    # Construct the full feature name
-    melted_df['metric_name'] = metric_name
-    melted_df['feature_name'] = metric_name + '_' + melted_df['feature_name_suffix'] + '_5m'
-    
-    # Drop the temporary suffix column and return records
-    return melted_df[['ts', 'vm_id', 'metric_name', 'feature_name', 'value']].to_dict('records')
+        features_df = features_df.fillna(0.0)
 
+        # Melt the DataFrame from wide to long/narrow format.
+        # This will now succeed because the 'ts' column exists.
+        melted_df = features_df.melt(
+            id_vars=['ts', 'vm_id'],
+            value_vars=['mean', 'std'],
+            var_name='feature_name_suffix',
+            value_name='value'
+        )
 
-def run_cpu_feature_engineering_batch():
-    """
-    Runs a single, atomic batch of the idempotent feature engineering process,
-    adapted for the narrow 'features' table schema.
-    """
-    logger.info("Running CPU feature engineering batch...")
-    metric_name = 'cpu_util_pct'
+        melted_df['metric_name'] = self.metric_name
+        melted_df['feature_name'] = self.metric_name + '_' + melted_df['feature_name_suffix'] + '_5m'
+        
+        return melted_df[['ts', 'vm_id', 'metric_name', 'feature_name', 'value']].to_dict('records')
 
-    with engine.begin() as conn:
-        try:
-            # Step 1: Lock and get watermark (unchanged)
-            last_done = conn.execute(text("""
-                SELECT last_bucket FROM fe_progress WHERE metric_name = :metric_name FOR UPDATE
-            """), {"metric_name": metric_name}).scalar_one()
-            logger.info(f"Watermark for '{metric_name}' is at: {last_done}")
+    def run_batch(self):
+        """
+        Runs a single, atomic batch of the feature engineering process.
+        """
+        logger.info(f"Running feature engineering batch for '{self.metric_name}'...")
 
-            # Step 2: Fetch new data (unchanged)
-            raw_data_result = conn.execute(text("""
-                SELECT bucket, vm_id, cpu_util_pct
-                FROM   metrics_wide
-                WHERE  bucket > :last_done
-                  AND  bucket <= now() - INTERVAL '1 minute'
-                ORDER BY bucket, vm_id
-            """), {"last_done": last_done}).fetchall()
+        with engine.begin() as conn:
+            try:
+                # Step 1: Lock and get watermark
+                last_done = conn.execute(text("""
+                    SELECT last_bucket FROM fe_progress WHERE metric_name = :metric_name FOR UPDATE
+                """), {"metric_name": self.metric_name}).scalar_one()
+                logger.info(f"Watermark for '{self.metric_name}' is at: {last_done}")
 
-            if not raw_data_result:
-                logger.info("No new finalized data to process.")
-                return
+                # Step 2: Fetch new data finalized for processing
+                raw_data_result = conn.execute(text(f"""
+                    SELECT bucket, vm_id, {self.metric_name}
+                    FROM   metrics_wide
+                    WHERE  bucket > :last_done
+                      AND  bucket <= now() - INTERVAL '1 minute'
+                    ORDER BY bucket, vm_id
+                """), {"last_done": last_done}).fetchall()
 
-            logger.info(f"Fetched {len(raw_data_result)} new rows to process.")
+                if not raw_data_result:
+                    logger.info("No new finalized data to process.")
+                    return
 
-            # Step 3: Transform raw data into features (updated logic)
-            df = pd.DataFrame(raw_data_result, columns=['bucket', 'vm_id', 'cpu_util_pct'])
-            feature_rows = _calculate_cpu_features(df, metric_name)
+                logger.info(f"Fetched {len(raw_data_result)} new rows to process.")
 
-            if not feature_rows:
-                logger.warning("Feature engineering resulted in zero rows; skipping DB writes.")
-                return
+                # Step 3: Transform raw data into features
+                df = pd.DataFrame(raw_data_result, columns=['bucket', 'vm_id', self.metric_name])
+                feature_rows = self._calculate_features(df)
 
-            # Step 4: Idempotently UPSERT into the new 'features' table
-            upsert_stmt = text("""
-                INSERT INTO features (ts, vm_id, metric_name, feature_name, value)
-                VALUES (:ts, :vm_id, :metric_name, :feature_name, :value)
-                ON CONFLICT (ts, vm_id, metric_name, feature_name) DO UPDATE
-                SET value = EXCLUDED.value;
-            """)
-            conn.execute(upsert_stmt, feature_rows)
-            logger.info(f"Upserted {len(feature_rows)} feature rows into 'features'.")
+                if not feature_rows:
+                    logger.warning("Feature engineering resulted in zero feature rows; skipping DB writes.")
+                    return
 
-            # Step 5: Advance the watermark (updated to use 'ts' from feature rows)
-            new_watermark = max(row['ts'] for row in feature_rows)
-            conn.execute(text("""
-                UPDATE fe_progress SET last_bucket = :new_watermark WHERE metric_name = :metric_name
-            """), {"new_watermark": new_watermark, "metric_name": metric_name})
-            
-            logger.info(f"Advanced watermark for '{metric_name}' to {new_watermark}")
+                # Step 4: Idempotently UPSERT into the 'features' table
+                upsert_stmt = text("""
+                    INSERT INTO features (ts, vm_id, metric_name, feature_name, value)
+                    VALUES (:ts, :vm_id, :metric_name, :feature_name, :value)
+                    ON CONFLICT (ts, vm_id, metric_name, feature_name) DO UPDATE
+                    SET value = EXCLUDED.value;
+                """)
+                conn.execute(upsert_stmt, feature_rows)
+                logger.info(f"Upserted {len(feature_rows)} feature rows into 'features'.")
 
-        except Exception as e:
-            logger.error(f"Transaction failed, will be rolled back. Error: {e}", exc_info=True)
-            raise
+                # Step 5: Advance the watermark
+                new_watermark = max(row['ts'] for row in feature_rows)
+                conn.execute(text("""
+                    UPDATE fe_progress SET last_bucket = :new_watermark WHERE metric_name = :metric_name
+                """), {"new_watermark": new_watermark, "metric_name": self.metric_name})
+                
+                logger.info(f"Advanced watermark for '{self.metric_name}' to {new_watermark}")
 
-    logger.info("CPU feature engineering batch finished successfully.")
+            except Exception as e:
+                logger.error(f"Transaction failed, will be rolled back. Error: {e}", exc_info=True)
+                raise # Re-raise the exception to ensure the transaction rolls back
+
+        logger.info(f"Feature engineering batch for '{self.metric_name}' finished successfully.")

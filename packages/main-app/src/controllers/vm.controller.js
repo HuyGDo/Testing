@@ -33,7 +33,7 @@ async function deleteVm(req, res) {
 
 async function regenerateTargets(req, res) {
     try {
-        const result = await vmService.regenerateTargets();
+        const result = await vmService.syncPrometheusTargets();
         res.status(200).json({ message: `Successfully regenerated ${result.count} targets.`, ...result });
     } catch (error) {
         console.error(error);

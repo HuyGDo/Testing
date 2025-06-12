@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
     RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/%2f"
     TEST_MODE: bool = False
+    GEMINI_API_KEY: str = "AIzaSyB6iRcDwFUZ4lI4Vk2lq2LQk8xBl0O8j2w"
 
     class Config:
         env_file = ".env"
