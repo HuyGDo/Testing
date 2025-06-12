@@ -101,3 +101,60 @@ CREATE TABLE metrics_extended (
     horizon_min SMALLINT;
     PRIMARY KEY (ts, vm_id, metric_name, type)
 );
+
+--
+-- SQL Script to set up a robust feature engineering pipeline,
+-- adjusted for your database schema.
+--
+
+-- Step 1: Adjust Continuous Aggregate Policy for 'metrics_wide'
+-- This ensures we only process data that is at least 1 minute old and stable.
+-- We remove any existing policy first to ensure a clean state.
+-- The settings are aligned with your provided schema.
+SELECT remove_continuous_aggregate_policy('metrics_wide', if_exists => TRUE);
+SELECT add_continuous_aggregate_policy(
+    'metrics_wide',
+    start_offset => INTERVAL '2 hours',      -- Look back to fill any gaps in aggregation.
+    end_offset   => INTERVAL '1 minute',     -- IMPORTANT: Leave a 1-minute gap for data to stabilize before processing.
+    schedule_interval => INTERVAL '1 minute'
+);
+
+-- Step 2: Create a progress tracking table (watermark)
+-- This tiny table keeps track of the last successfully processed time bucket for each metric.
+-- This part of the logic remains unchanged as it is essential for the idempotent worker.
+CREATE TABLE IF NOT EXISTS fe_progress (
+    metric_name text PRIMARY KEY,
+    last_bucket timestamptz NOT NULL
+);
+
+-- Bootstrap the table for our cpu metric if it doesn't exist.
+-- The process starts from the beginning of time.
+INSERT INTO fe_progress (metric_name, last_bucket)
+VALUES ('cpu_util_pct', '1970-01-01')
+ON CONFLICT (metric_name) DO NOTHING;
+
+-- Step 3: The 'features' table is already created in your main schema.
+-- We no longer need to create 'features_cpu' here.
+
+-- Step 4: Create a monitoring view to detect processing gaps
+-- This view will return rows if the feature engineering job has fallen behind.
+-- It has been updated to work with the narrow 'features' table.
+CREATE OR REPLACE VIEW fe_cpu_gap AS
+SELECT
+    w.bucket,
+    w.vm_id
+FROM
+    metrics_wide w
+LEFT JOIN (
+    -- We just need to check for the existence of one representative feature
+    -- to know if the bucket has been processed for this metric.
+    SELECT ts, vm_id
+    FROM features
+    WHERE metric_name = 'cpu_util_pct'
+    GROUP BY ts, vm_id
+) f ON w.bucket = f.ts AND w.vm_id = f.vm_id
+WHERE
+    w.cpu_util_pct IS NOT NULL -- A raw data point exists
+    AND f.ts IS NULL           -- But the corresponding feature row does not exist
+    AND w.bucket <= now() - INTERVAL '2 minutes'; -- Check only for buckets that should have been processed.
+

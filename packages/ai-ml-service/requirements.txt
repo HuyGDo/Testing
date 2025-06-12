@@ -11,3 +11,4 @@ statsmodels==0.14.*
 psycopg2-binary==2.9.*
 APScheduler==3.10.*
 tensorflow==2.16.*
+sqlalchemy

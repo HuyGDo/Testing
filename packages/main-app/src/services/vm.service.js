@@ -2,6 +2,7 @@ const vmRepository = require('../repository/vm.repository');
 const db = require('../config/database');
 const fs = require('fs/promises');
 const path = require('path');
+const { fromHstore } = require('../utils/hstore.util');
 
 const targetsPath = path.resolve(__dirname, '../../../infra/prometheus/targets.json');
 
@@ -19,6 +20,37 @@ async function getPrometheusTargets() {
 // Helper to write Prometheus targets
 async function writePrometheusTargets(targets) {
     await fs.writeFile(targetsPath, JSON.stringify(targets, null, 2));
+}
+
+async function regenerateTargets() {
+    console.log('Generating Prometheus targets file...');
+    const client = await db.getClient();
+    try {
+        const { rows } = await client.query(`
+            SELECT t.port, t.scrape, t.labels, v.ip_address
+            FROM prom_sd_static_targets t
+            JOIN vm v ON t.vm_id = v.vm_id
+            WHERE t.scrape = TRUE;
+        `);
+
+        const targets = rows.map(row => {
+            const hstoreData = fromHstore(row.labels);
+            return {
+                targets: [`${row.ip_address}:${row.port}`],
+                labels: hstoreData
+            };
+        });
+
+        await writePrometheusTargets(targets);
+
+        console.log(`Successfully wrote ${targets.length} targets to ${targetsPath}`);
+        return { success: true, count: targets.length, path: targetsPath };
+    } catch (error) {
+        console.error('Error generating targets file:', error);
+        throw error;
+    } finally {
+        client.release();
+    }
 }
 
 async function createVm(vmData) {
@@ -99,5 +131,6 @@ async function deleteVm(vmId) {
 module.exports = {
     createVm,
     getAllVms,
-    deleteVm
+    deleteVm,
+    regenerateTargets
 };

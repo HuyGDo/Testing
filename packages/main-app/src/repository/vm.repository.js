@@ -1,24 +1,5 @@
 const db = require('../config/database');
-
-/**
- * Converts a JavaScript object to a PostgreSQL hstore string format.
- * Example: { "a": "1", "b": "2" } -> '"a"=>"1","b"=>"2"'
- * @param {object} obj The object to convert.
- * @returns {string} The hstore-formatted string.
- */
-function toHstore(obj) {
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
-    return '';
-  }
-  return Object.entries(obj)
-    .map(([key, value]) => {
-      // Escape quotes and backslashes in keys and values
-      const escapedKey = String(key).replace(/"/g, '""').replace(/\\/g, '\\\\');
-      const escapedValue = String(value).replace(/"/g, '""').replace(/\\/g, '\\\\');
-      return `"${escapedKey}"=>"${escapedValue}"`;
-    })
-    .join(',');
-}
+const { toHstore } = require('../utils/hstore.util');
 
 async function createVm(vm) {
     const { name, ip_address, labels } = vm;

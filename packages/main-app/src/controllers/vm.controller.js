@@ -31,8 +31,19 @@ async function deleteVm(req, res) {
     }
 }
 
+async function regenerateTargets(req, res) {
+    try {
+        const result = await vmService.regenerateTargets();
+        res.status(200).json({ message: `Successfully regenerated ${result.count} targets.`, ...result });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Error regenerating Prometheus targets file' });
+    }
+}
+
 module.exports = {
     createVm,
     getAllVms,
-    deleteVm
+    deleteVm,
+    regenerateTargets
 };
