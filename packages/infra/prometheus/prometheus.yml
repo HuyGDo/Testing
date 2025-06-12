@@ -1,15 +1,24 @@
 # infra/prometheus/prometheus.yml
 global:
-  scrape_interval: 15s # By default, scrape targets every 15 seconds.
+  scrape_interval: 60s # By default, scrape targets every 15 seconds.
 
 scrape_configs:
+  # This job scrapes your simulated node exporters listed in targets.json
   - job_name: 'node_exporter_simulator'
     file_sd_configs:
       - files:
-          - 'targets.json' # Path relative to the prometheus.yml file
+          - 'targets.json' 
 
+  # --- THIS IS THE NEW SECTION TO ADD ---
+  # This job scrapes the prometheus-pg-adapter itself for its internal health metrics.
+  - job_name: 'prometheus-pg-adapter'
+    static_configs:
+      - targets: ['localhost:9201']
+
+# This section tells Prometheus where to send all scraped data for long-term storage.
 remote_write:
   - url: "http://localhost:9201/write"
 
-remote_read:      # optional, lets Prometheus query long-term data
+# This section is optional, but allows Prometheus to query the adapter for historical data.
+remote_read:
   - url: "http://localhost:9201/read"
