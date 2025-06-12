@@ -1,6 +1,8 @@
 const { v4: uuidv4 } = require('uuid');
 const RabbitMQService = require('./rabbit_mq.service');
 const { redisClient, hgetallAsync } = require('../config/redis');
+const db = require('../config/database');
+const RecommendationService = require('./recommendation.service');
 
 class PredictionService {
   /**
@@ -48,6 +50,34 @@ class PredictionService {
     }
     
     return result;
+  }
+
+  /**
+   * [NEW] Fetches historical data for the dashboard.
+   */
+  static async getHistoricalData(vm_id, metric) {
+    // Fetches the last 24 hours of 1-minute aggregated data
+    const query = `
+      SELECT bucket as timestamp, ${metric} as value
+      FROM metrics_wide
+      WHERE vm_id = $1 AND ${metric} IS NOT NULL AND bucket >= now() - INTERVAL '24 hours'
+      ORDER BY bucket;
+    `;
+    const { rows } = await db.query(query, [vm_id]);
+    return rows;
+  }
+
+  /**
+   * [NEW] Gets a recommendation based on a completed prediction task.
+   */
+  static async getRecommendation(task_id) {
+    const predictionResult = await this.getPredictionResult(task_id);
+    if (!predictionResult || predictionResult.status !== 'COMPLETED') {
+        return "Recommendation is not ready yet. Prediction is pending or failed.";
+    }
+    // The recommendation service expects the raw prediction data
+    const recommendation = RecommendationService.getRecommendation(predictionResult);
+    return recommendation.recommendation;
   }
 }
 

@@ -8,7 +8,7 @@ const router = express.Router();
 router.post('/predict', PredictionController.createPrediction);
 
 // Route to get prediction status
-router.get('/predict/status', PredictionController.getPrediction);
+router.get('/predict/status/:task_id', PredictionController.getPrediction);
 
 // Route for real-time updates via SSE
 router.get('/predict/events/:vm_id', (req, res) => {

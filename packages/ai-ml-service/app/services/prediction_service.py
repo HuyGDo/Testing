@@ -107,21 +107,46 @@ class PredictionService:
         # For now, we assume it's a local path.
         return joblib.load(storage_uri)
 
-    def _fetch_features(self, vm_id, metric_name):
-        logger.info(f"Fetching features for vm_id: {vm_id}, metric: {metric_name}")
+    def _fetch_features(self, vm_id, metric_name, horizon_min):
+        logger.info(f"Fetching features for vm_id: {vm_id}, metric: {metric_name}, horizon: {horizon_min}")
         
         if metric_name not in self.ALLOWED_METRICS:
             raise ValueError(f"Invalid metric_name: {metric_name}. Allowed are: {self.ALLOWED_METRICS}")
 
-        # Fetch the last 120 data points from the wide metrics view as per the diagram
-        query = f"""
-            SELECT bucket, {metric_name}
-            FROM metrics_wide
-            WHERE vm_id = %(vm_id)s
-            ORDER BY bucket DESC
-            LIMIT 120;
-        """
-        # The returned DataFrame is already sorted from most recent to oldest
+        # Choose query based on horizon, as per requirements
+        if horizon_min <= 60: # 1h
+            query = f"""
+                SELECT bucket, {metric_name}
+                FROM metrics_wide
+                WHERE vm_id = %(vm_id)s
+                  AND {metric_name} IS NOT NULL
+                  AND bucket >= now() - INTERVAL '120 minutes'
+                ORDER BY bucket DESC
+                LIMIT 120;
+            """
+        elif horizon_min <= 360: # 6h
+            query = f"""
+                SELECT time_bucket('5 minutes', bucket) AS ts, AVG({metric_name}) AS {metric_name}
+                FROM metrics_wide
+                WHERE vm_id = %(vm_id)s
+                  AND {metric_name} IS NOT NULL
+                  AND bucket >= now() - INTERVAL '12 hours'
+                GROUP BY ts
+                ORDER BY ts DESC
+                LIMIT 144; -- 12 hours / 5 min = 144 points
+            """
+        else: # 24h
+            query = f"""
+                SELECT time_bucket('15 minutes', bucket) AS ts, AVG({metric_name}) AS {metric_name}
+                FROM metrics_wide
+                WHERE vm_id = %(vm_id)s
+                  AND {metric_name} IS NOT NULL
+                  AND bucket >= now() - INTERVAL '4 days'
+                GROUP BY ts
+                ORDER BY ts DESC
+                LIMIT 384; -- 4 days / 15 min = 384 points
+            """
+            
         df = pd.read_sql(query, self.db_conn, params={'vm_id': vm_id})
         
         # Reverse to get chronological order for the model

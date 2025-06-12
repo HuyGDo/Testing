@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import useSWR from 'swr';
 import {
   LineChart,
@@ -12,6 +12,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
+
 import { getVMs, VM, triggerPrediction, getPredictionStatus, getDashboardData, DashboardData, getRecommendation } from '@/api';
 import { Button } from '@/components/ui/button';
 import {
@@ -31,72 +32,6 @@ const HORIZONS = [1, 6, 24]; // in hours
 const MAX_VMS = 6;
 
 // Custom hook for polling
-function usePredictionPolling(taskIds: Record<string, string | null>) {
-  const [data, setData] = useState<Record<string, any>>({});
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<any>(null);
-
-  useEffect(() => {
-    const activeTaskIds = Object.values(taskIds).filter(Boolean);
-    if (activeTaskIds.length === 0) {
-      setData({});
-      setIsLoading(false);
-      return;
-    }
-
-    let intervalId: NodeJS.Timeout;
-    let attempts = 0;
-    const maxAttempts = 60; // 5 minutes polling
-
-    const poll = async () => {
-      try {
-        const results = await Promise.all(
-          Object.entries(taskIds).map(async ([vmId, taskId]) => {
-            if (!taskId) return null;
-            const statusResult = await getPredictionStatus(taskId);
-            return { vmId, result: statusResult };
-          })
-        );
-
-        const newData: Record<string, any> = {};
-        let allCompleted = true;
-
-        results.forEach((result) => {
-          if (!result) return;
-          const { vmId, result: statusResult } = result;
-          
-          if (statusResult.status === 'COMPLETED') {
-            newData[vmId] = statusResult.result;
-          } else if (statusResult.status === 'FAILED') {
-            setError(`Prediction failed for VM ${vmId}`);
-          } else {
-            allCompleted = false;
-          }
-        });
-
-        setData(newData);
-        attempts++;
-
-        if (allCompleted || attempts > maxAttempts) {
-          setIsLoading(false);
-          clearInterval(intervalId);
-        }
-      } catch (err) {
-        setError(err);
-        setIsLoading(false);
-        clearInterval(intervalId);
-      }
-    };
-
-    setIsLoading(true);
-    setError(null);
-    intervalId = setInterval(poll, 5000); // Poll every 5 seconds
-
-    return () => clearInterval(intervalId);
-  }, [taskIds]);
-
-  return { data, isLoading, error };
-}
 
 export default function DashboardPage() {
   const { data: vms } = useSWR<VM[]>('/vms', getVMs);
@@ -104,9 +39,14 @@ export default function DashboardPage() {
   const [selectedMetric, setSelectedMetric] = useState<string>('cpu_util_pct');
   const [selectedHorizon, setSelectedHorizon] = useState<number>(1);
   const [taskIds, setTaskIds] = useState<Record<string, string | null>>({});
+  
+  // State for prediction results and loading status
+  const [predictionResults, setPredictionResults] = useState<Record<string, any>>({});
+  const [isPredictionLoading, setIsPredictionLoading] = useState(false);
   const [recommendation, setRecommendation] = useState<string | null>(null);
 
-  const { data: predictionResults, isLoading: isPredictionLoading, error: predictionError } = usePredictionPolling(taskIds);
+  // Use a ref to keep track of active EventSource connections
+  const eventSources = useRef<Record<string, EventSource>>({});
 
   const { data: historicalDataMap, isLoading: isHistoricalLoading } = useSWR(
     selectedVms.length > 0 ? ['/dashboard-data', selectedVms, selectedMetric] : null,
@@ -121,10 +61,59 @@ export default function DashboardPage() {
     })
   );
 
+  // Effect to handle SSE connections
+  useEffect(() => {
+    // Close any connections for deselected VMs
+    Object.keys(eventSources.current).forEach(vmId => {
+      if (!selectedVms.includes(vmId)) {
+        eventSources.current[vmId].close();
+        delete eventSources.current[vmId];
+      }
+    });
+
+    // Create new connections for selected VMs
+    selectedVms.forEach(vmId => {
+      if (!eventSources.current[vmId]) {
+        const url = process.env.NEXT_PUBLIC_API_URL ? `${process.env.NEXT_PUBLIC_API_URL}/predict/events/${vmId}` : `http://localhost:3000/api/predict/events/${vmId}`;
+        const eventSource = new EventSource(url);
+
+        eventSource.onmessage = async (event) => {
+          const data = JSON.parse(event.data);
+          if (data.event === 'prediction_ready' && data.task_id) {
+            // Fetch the completed prediction result
+            const result = await getPredictionStatus(data.task_id);
+            if (result.status === 'COMPLETED') {
+              setPredictionResults(prev => ({...prev, [vmId]: result.result}));
+              // Fetch recommendation for this specific task
+              const rec = await getRecommendation(data.task_id);
+              setRecommendation(prev => `${prev || ''}\nVM ${getVmName(vmId)}: ${rec.recommendation}`);
+            }
+            // Once we get the update, we can assume the process for this VM is done
+            setIsPredictionLoading(false); 
+          }
+        };
+
+        eventSource.onerror = (err) => {
+          console.error('EventSource failed:', err);
+          eventSource.close();
+          delete eventSources.current[vmId];
+        };
+        
+        eventSources.current[vmId] = eventSource;
+      }
+    });
+
+    // Cleanup on component unmount
+    return () => {
+      Object.values(eventSources.current).forEach(es => es.close());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVms]);
+
   const handleVmSelect = (vmId: string) => {
     if (selectedVms.includes(vmId)) return;
-    if (selectedVms.length >= MAX_VMS) {
-      alert(`You can only select up to ${MAX_VMS} VMs`);
+    if (selectedVms.length >= 6) {
+      alert(`You can only select up to 6 VMs`);
       return;
     }
     setSelectedVms([...selectedVms, vmId]);
@@ -132,16 +121,27 @@ export default function DashboardPage() {
 
   const handleVmRemove = (vmId: string) => {
     setSelectedVms(selectedVms.filter(id => id !== vmId));
-    const newTaskIds = { ...taskIds };
-    delete newTaskIds[vmId];
-    setTaskIds(newTaskIds);
+    // Also clear prediction results and task for the removed VM
+    setPredictionResults(prev => {
+      const next = {...prev};
+      delete next[vmId];
+      return next;
+    });
+    setTaskIds(prev => {
+        const next = {...prev};
+        delete next[vmId];
+        return next;
+    })
   };
-    
+
   const handlePredict = async () => {
     if (selectedVms.length === 0) return;
 
-    const newTaskIds: Record<string, string> = {};
+    setIsPredictionLoading(true);
+    setPredictionResults({}); // Clear old results
+    setRecommendation(null);  // Clear old recommendations
     
+    const newTasks: Record<string, string | null> = {};
     try {
       for (const vmId of selectedVms) {
         const { task_id } = await triggerPrediction({
@@ -149,55 +149,41 @@ export default function DashboardPage() {
           metric: selectedMetric,
           horizon_hours: selectedHorizon,
         });
-        newTaskIds[vmId] = task_id;
+        newTasks[vmId] = task_id;
       }
-      
-      setTaskIds(newTaskIds);
+      setTaskIds(newTasks);
     } catch (error) {
       console.error("Failed to trigger predictions", error);
+      setIsPredictionLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (Object.keys(predictionResults || {}).length > 0) {
-      const fetchRecommendations = async () => {
-        try {
-          const recommendations = await Promise.all(
-            Object.entries(taskIds)
-              .filter(([_, taskId]) => taskId)
-              .map(([vmId, taskId]) => getRecommendation(taskId!))
-          );
-          
-          setRecommendation(recommendations.map(r => r.recommendation).join('\n'));
-        } catch (error) {
-          console.error("Failed to fetch recommendations", error);
-          setRecommendation("Could not fetch recommendations.");
-        }
-      };
-      fetchRecommendations();
-    } else {
-      setRecommendation(null);
-    }
-  }, [predictionResults, taskIds]);
+  const getVmName = (vmId: string) => vms?.find(vm => vm.id === vmId)?.name || vmId;
 
-  // Prepare chart data for all selected VMs
   const chartData = selectedVms.flatMap(vmId => {
     const historical = (historicalDataMap?.[vmId] || []).map(d => ({
       ...d,
+      timestamp: new Date(d.timestamp).toLocaleString(), // Format date for chart
       type: 'historical',
       vm: vmId
     }));
-    
-    const predicted = (predictionResults?.[vmId] || []).map((d: any) => ({
-      ...d,
-      type: 'predicted',
-      vm: vmId
-    }));
 
+    const predictedData = predictionResults[vmId];
+    // The prediction result from Redis is now an array of numbers, not objects with timestamps.
+    // We need to generate future timestamps.
+    const lastHistoricalPoint = historical[historical.length - 1];
+    const predicted = Array.isArray(predictedData) && lastHistoricalPoint ? predictedData.map((value, index) => {
+        const nextTimestamp = new Date(new Date(lastHistoricalPoint.timestamp).getTime() + (index + 1) * 60000);
+        return {
+            timestamp: nextTimestamp.toLocaleString(),
+            value: value,
+            type: 'predicted',
+            vm: vmId,
+        };
+    }) : [];
+    
     return [...historical, ...predicted];
   });
-
-  const getVmName = (vmId: string) => vms?.find(vm => vm.id === vmId)?.name || vmId;
 
   return (
     <div className="container mx-auto py-10">
@@ -272,8 +258,6 @@ export default function DashboardPage() {
           </Button>
         </div>
       </div>
-
-      {predictionError && <p className='text-red-500 my-4'>{predictionError}</p>}
 
       {recommendation && (
         <Alert className="my-4">
